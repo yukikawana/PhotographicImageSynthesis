@@ -141,6 +141,7 @@ for ind in range(100001,100501):
     if not os.path.isfile("data/cityscapes/Label512Full/%08d.png"%ind):#test label
         continue    
     semantic=helper.get_semantic_map("data/cityscapes/Label512Full/%08d.png"%ind)#test label
+    print(semantic.shape)
     output=sess.run(generator,feed_dict={label:np.concatenate((semantic,np.expand_dims(1-np.sum(semantic,axis=3),axis=3)),axis=3)})
     output=np.minimum(np.maximum(output,0.0),255.0)
     scipy.misc.toimage(output[0,:,:,:],cmin=0,cmax=255).save("result_512p/final/%06d_output.jpg"%ind)
