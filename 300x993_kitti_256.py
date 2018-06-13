@@ -10,41 +10,27 @@ import os, sys
 import dill
 sys.path.insert(0,"scd")
 from scd import get_tenors, process_image, imread_as_jpg 
-NUM_TRAINING_IMAGES = 7000
+NUM_TRAINING_IMAGES = 7480
 ckpt_filename = './ssd_300_kitti/ssd_model.ckpt'
 
 def lrelu(x):
     return tf.maximum(0.2*x,x)
 
-def build_net(ntype,nin,nwb=None,name=None):
-    if ntype=='conv':
-        return tf.nn.relu(tf.nn.conv2d(nin,nwb[0],strides=[1,1,1,1],padding='SAME',name=name)+nwb[1])
-    elif ntype=='pool':
-        return tf.nn.avg_pool(nin,ksize=[1,2,2,1],strides=[1,2,2,1],padding='SAME')
-
-def get_weight_bias(vgg_layers,i):
-    weights=vgg_layers[i][0][0][2][0][0]
-    weights=tf.constant(weights)
-    bias=vgg_layers[i][0][0][2][0][1]
-    bias=tf.constant(np.reshape(bias,(bias.size)))
-    return weights,bias
-
 def build_scd(input,sess,reuse=None):
     #with tf.variable_scope("scd300"):
-    if(True):
-        if reuse:
-            tf.get_variable_scope().reuse_variables()
-        #end_points= get_tenors(ckpt_filename,sess, input=input, reuse=reuse)
-        end_points= get_tenors(ckpt_filename,sess, input=input)
-        rs =r".*\/conv[0-9]\/conv[0-9]_[0-9]/Relu$"
-        rc = re.compile(rs)
-        new_end_points = {}
-        for op in tf.get_default_graph().as_graph_def().node:
-            gr = rc.match(op.name)
-            if gr:
-                new_end_points[op.name.split("/")[-2]] = tf.get_default_graph().get_tensor_by_name(op.name+":0")
-        new_end_points["input"] = end_points["input"]
-        return new_end_points
+    if reuse:
+        tf.get_variable_scope().reuse_variables()
+    #end_points= get_tenors(ckpt_filename,sess, input=input, reuse=reuse)
+    end_points= get_tenors(ckpt_filename,sess, input=input)
+    rs =r".*\/conv[0-9]\/conv[0-9]_[0-9]/Relu$"
+    rc = re.compile(rs)
+    new_end_points = {}
+    for op in tf.get_default_graph().as_graph_def().node:
+        gr = rc.match(op.name)
+        if gr:
+            new_end_points[op.name.split("/")[-2]] = tf.get_default_graph().get_tensor_by_name(op.name+":0")
+    new_end_points["input"] = end_points["input"]
+    return new_end_points
 
 def recursive_generator(label,sp):
     dim=512 if sp>=75 else 1024
@@ -57,10 +43,16 @@ def recursive_generator(label,sp):
     net=slim.conv2d(input,dim,[3,3],rate=1,normalizer_fn=slim.layer_norm,activation_fn=lrelu,scope='g_'+str(sp)+'_conv1')
     net=slim.conv2d(net,dim,[3,3],rate=1,normalizer_fn=slim.layer_norm,activation_fn=lrelu,scope='g_'+str(sp)+'_conv2')
     if sp==150:
+        net=slim.conv2d(net,3,[1,1],rate=1,activation_fn=None,scope='g_'+str(sp)+'_conv100')
+        net=(net+1.0)/2.0*255.0
+
+        """
         net=slim.conv2d(net,27,[1,1],rate=1,activation_fn=None,scope='g_'+str(sp)+'_conv100')
         net=(net+1.0)/2.0*255.0
         split0,split1,split2=tf.split(tf.transpose(net,perm=[3,1,2,0]),num_or_size_splits=3,axis=0)
         net=tf.concat([split0,split1,split2],3)
+        """
+
     return net
 
 def compute_error(real,fake,label):
@@ -69,11 +61,12 @@ def compute_error(real,fake,label):
 
 dimdic = dill.load(open("dim_150.pkl", "rb"))
 scaledic = dill.load(open("scaledic.pkl", "rb"))
-sess=tf.Session()
+config = tf.ConfigProto(gpu_options=tf.GPUOptions(allow_growth=True))
+sess=tf.Session(config=config)
 is_training=True
 sp=150#spatial resolution: 256x512
 with tf.variable_scope(tf.get_variable_scope()):
-    label=tf.placeholder(tf.float32,[None,None,None,129])
+    label=tf.placeholder(tf.float32,[None,None,None,513])
     label2 =tf.image.resize_bilinear(label,(150,496),align_corners=True)
     generator=recursive_generator(label2,sp)
     real_image=tf.placeholder(tf.float32,[None,None,None,3])
@@ -107,14 +100,14 @@ if is_training:
     input_images=[None]*NUM_TRAINING_IMAGES
     label_images=[None]*NUM_TRAINING_IMAGES
     for epoch in range(1,101):
-        if os.path.isdir("result_kitti256p/%04d"%epoch):
+        if os.path.isdir("result_kitti256p_2/%04d"%epoch):
             continue
         cnt=0
         for ind in np.random.permutation(NUM_TRAINING_IMAGES - 25)+1:
             st=time.time()
             cnt+=1
             if input_images[ind] is None:
-                label_images[ind]=np.load("hmlabels/%06d.npz"%ind)["arr_0"]#training label
+                label_images[ind]=np.load("hmpool5/%06d.npz"%ind)["arr_0"]#training label
                
                 path =  '../kitti/training/image_2/%06d.png'%ind
                 img = imread_as_jpg(path)
@@ -125,27 +118,30 @@ if is_training:
             _,G_current,l0,l1,l2,l3,l4,l5=sess.run([G_opt,G_loss,p0,p1,p2,p3,p4,p5],feed_dict={label:np.concatenate((label_images[ind],np.expand_dims(1-np.sum(label_images[ind],axis=3),axis=3)),axis=3),real_image:input_images[ind],lr:1e-4})#may try lr:min(1e-6*np.power(1.1,epoch-1),1e-4 if epoch>100 else 1e-3) in case lr:1e-4 is not good
             g_loss[ind]=G_current
             print("%d %d %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f"%(epoch,cnt,np.mean(g_loss[np.where(g_loss)]),np.mean(l0),np.mean(l1),np.mean(l2),np.mean(l3),np.mean(l4),np.mean(l5),time.time()-st))
-        os.makedirs("result_kitti256p/%04d"%epoch)
-        target=open("result_kitti256p/%04d/score.txt"%epoch,'w')
+        os.makedirs("result_kitti256p_2/%04d"%epoch)
+        target=open("result_kitti256p_2/%04d/score.txt"%epoch,'w')
         target.write("%f"%np.mean(g_loss[np.where(g_loss)]))
         target.close()
-        saver.save(sess,"result_kitti256p/model.ckpt")
+        saver.save(sess,"result_kitti256p_2/model.ckpt")
         if epoch%3==0:
-            saver.save(sess,"result_kitti256p/%04d/model.ckpt"%epoch)
-        for ind in range(NUM_TRAINING_IMAGES,NUM_TRAINING_IMAGES+50):
-            path =  '../kitti/training/image_2/%06d.png'%ind
+            saver.save(sess,"result_kitti256p_2/%04d/model.ckpt"%epoch)
+        for ind in range(NUM_TRAINING_IMAGES+1,NUM_TRAINING_IMAGES+51):
+            path =  '../kitti/testing/image_2/%06d.png'%ind
             if not os.path.isfile(path):
                 continue
-            semantic = np.load("hmlabels/%06d.npz"%ind)["arr_0"]#training label
+            semantic = np.load("hmpool5/%06d.npz"%ind)["arr_0"]#training label
             output=sess.run(generator,feed_dict={label:np.concatenate((semantic,np.expand_dims(1-np.sum(semantic,axis=3),axis=3)),axis=3)})
             output=np.minimum(np.maximum(output,0.0),255.0)
+            """
             upper=np.concatenate((output[0,:,:,:],output[1,:,:,:],output[2,:,:,:]),axis=1)
             middle=np.concatenate((output[3,:,:,:],output[4,:,:,:],output[5,:,:,:]),axis=1)
             bottom=np.concatenate((output[6,:,:,:],output[7,:,:,:],output[8,:,:,:]),axis=1)
-            scipy.misc.toimage(np.concatenate((upper,middle,bottom),axis=0),cmin=0,cmax=255).save("result_kitti256p/%04d/%06d_output.jpg"%(epoch,ind))
+            scipy.misc.toimage(np.concatenate((upper,middle,bottom),axis=0),cmin=0,cmax=255).save("result_kitti256p_2/%04d/%06d_output.jpg"%(epoch,ind))
+            """
+            scipy.misc.toimage(output[0,:,:,:],cmin=0,cmax=255).save("result_kitti256p_2/%04d/%06d_output.jpg"%(epoch,ind))
 
-if not os.path.isdir("result_kitti256p/final"):
-    os.makedirs("result_kitti256p/final")
+if not os.path.isdir("result_kitti256p_2/final"):
+    os.makedirs("result_kitti256p_2/final")
 for ind in range(100001,100501):
     if not os.path.isfile("data/cityscapes/Label512Full/%08d.png"%ind):#test label
         continue    
@@ -161,4 +157,4 @@ for ind in range(100001,100501):
     upper=np.concatenate((output[0,:,:,:],output[1,:,:,:],output[2,:,:,:]),axis=1)
     middle=np.concatenate((output[3,:,:,:],output[4,:,:,:],output[5,:,:,:]),axis=1)
     bottom=np.concatenate((output[6,:,:,:],output[7,:,:,:],output[8,:,:,:]),axis=1)
-    scipy.misc.toimage(np.concatenate((upper,middle,bottom),axis=0),cmin=0,cmax=255).save("result_kitti256p/final/%06d_output.jpg"%ind)
+    scipy.misc.toimage(np.concatenate((upper,middle,bottom),axis=0),cmin=0,cmax=255).save("result_kitti256p_2/final/%06d_output.jpg"%ind)

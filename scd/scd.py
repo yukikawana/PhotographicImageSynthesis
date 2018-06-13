@@ -9,6 +9,7 @@ import math
 import numpy as np
 import tensorflow as tf
 import cv2
+import re
 
 slim = tf.contrib.slim
 
@@ -35,7 +36,8 @@ colors_tableau = [(255, 255, 255), (31, 119, 180), (174, 199, 232), (255, 127, 1
                  (188, 189, 34), (219, 219, 141), (23, 190, 207), (158, 218, 229)]
 
 
-cnt = 0
+#cnt = 0#for traning
+cnt = 7481#for test
 # In[4]:
 
 
@@ -145,10 +147,19 @@ def ssd_process_image(img,tensors, isess, select_threshold=0.5):
     """
     predictions, localisations, logits, end_points, img_input, ssd  = tensors
     # Resize image to height 300.
-    factor = 300. / float(img.shape[0])
-    img = cv2.resize(img, (0,0), fx=factor, fy=factor) 
+    #factor = 300. / float(img.shape[0])
+    #img = cv2.resize(img, (0,0), fx=factor, fy=factor) 
     # Run SSD network and get class prediction and localization.
-    rpredictions, rlocalisations, feat = isess.run([predictions, localisations, end_points["block11_1"]], feed_dict={img_input: img})
+    #rs =r".*\/conv[0-9]\/conv[0-9]_[0-9]/Relu$"
+    rs = r".*ssd_300_vgg\/pool5\/MaxPool$"
+    rc = re.compile(rs)
+    end_points = {}
+    for op in tf.get_default_graph().as_graph_def().node:
+        gr = rc.match(op.name)
+        if gr:
+            end_points[op.name.split("/")[-2]] = tf.get_default_graph().get_tensor_by_name(op.name+":0")
+
+    rpredictions, rlocalisations, feat = isess.run([predictions, localisations, end_points["pool5"]], feed_dict={img_input: img})
     global cnt
     """
     feat[feat>0] = 1
@@ -163,12 +174,10 @@ def ssd_process_image(img,tensors, isess, select_threshold=0.5):
     semanticb[semantic==1]=True
     """
 
-    """
-    np.savez("hmlabels/%06d"%cnt, feat)
+    np.savez("hmpool5/%06d"%cnt, feat)
     cnt+=1
     a = np.array([])
     return a, a, a
-    """
     #rpredictions, rlocalisations = isess.run([predictions, localisations], feed_dict={img_input: img})
     
     # Get anchor boxes for this image shape.
@@ -197,30 +206,6 @@ def ssd_process_image(img,tensors, isess, select_threshold=0.5):
 
 
 # Load a sample image.
-"""
-path = 'test_images/'
-#path = '../kitti/training/image_2/'
-image_names = sorted(os.listdir(path))
-img = mpimg.imread(path + image_names[5])
-
-plot_image(img, 'Original frame', (10, 10))
-"""
-
-
-# ## Raw SSD output: multiple detections after simple thresholding
-
-# In[11]:
-
-
-# SSD network on image.
-"""
-rclasses, rscores, rbboxes = ssd_process_image(img, select_threshold=0.8)
-# Draw bboxes of detected objects.
-img_bboxes = np.copy(img)
-bboxes_draw_on_img(img_bboxes, rscores, rbboxes, colors_tableau, thickness=2, show_text=False)
-
-plot_image(img_bboxes, 'Raw SSD network output: multiple detections.', (10, 10))
-"""
 
 
 # In[12]:
@@ -316,7 +301,6 @@ def process_image(img, tensors, isess, select_threshold=0.8, nms_threshold=0.5 )
     rclasses, rscores, rbboxes = ssd_process_image(img, tensors, isess, select_threshold)
     rclasses, rscores, rbboxes = bboxes_nms_intersection_avg(rclasses, rscores, rbboxes, threshold=nms_threshold)
     # Draw bboxes of detected objects.
-    print(rclasses)
     bboxes_draw_on_img(img, rscores, rbboxes, colors_tableau, thickness=2, show_text=True)
     return img
 
