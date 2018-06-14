@@ -13,6 +13,7 @@ from scd import get_tenors, process_image, imread_as_jpg
 NUM_TRAINING_IMAGES = 7480
 #NUM_TRAINING_IMAGES = 30
 ckpt_filename = './ssd_300_kitti/ssd_model.ckpt'
+restore_epoch=9
 
 def lrelu(x):
     return tf.maximum(0.2*x,x)
@@ -111,6 +112,7 @@ if is_training:
     for epoch in range(1,101):
         if os.path.isdir("result_kitti256p_2/%04d"%epoch):
             continue
+        saver.restore(sess, "result_kitti256p_2/%04d/model.ckpt"%restore_epoch)
         cnt=0
         for ind in np.random.permutation(NUM_TRAINING_IMAGES - 25)+1:
             st=time.time()
@@ -138,14 +140,12 @@ if is_training:
         for ind in range(NUM_TRAINING_IMAGES+1,NUM_TRAINING_IMAGES+51):
             path =  '../kitti/testing/image_2/%06d.png'%ind
             #path =  '../kitti/training/image_2/%06d.png'%ind
-            if not os.path.isfile(path):
-                continue
+            #semantic = np.load("hmpool5/%06d.npz"%ind)["arr_0"]#training label
             if input_images[ind] is None:
-                semantic = np.load("hmpool5/%06d.npz"%ind)["arr_0"]#training label
                 img = imread_as_jpg(path)
                 img = cv2.resize(img, (496,150)) 
                 input_images[ind]=np.expand_dims(np.float32(img),axis=0)#training image
-            output=sess.run(generator,feed_dict={label2_small:np.concatenate((semantic,np.expand_dims(1-np.sum(semantic,axis=3),axis=3)),axis=3)})
+            output=sess.run(generator,feed_dict={real_image:input_images[ind]})
             #output=sess.run(generator,feed_dict={real_image:input_images[ind]})
             output=np.minimum(np.maximum(output,0.0),255.0)
             """
@@ -155,22 +155,19 @@ if is_training:
             scipy.misc.toimage(np.concatenate((upper,middle,bottom),axis=0),cmin=0,cmax=255).save("result_kitti256p_2/%04d/%06d_output.jpg"%(epoch,ind))
             """
             scipy.misc.toimage(output[0,:,:,:],cmin=0,cmax=255).save("result_kitti256p_2/%04d/%06d_output.jpg"%(epoch,ind))
-
-if not os.path.isdir("result_kitti256p_2/final"):
-    os.makedirs("result_kitti256p_2/final")
-for ind in range(100001,100501):
-    if not os.path.isfile("data/cityscapes/Label512Full/%08d.png"%ind):#test label
-        continue    
-    bsemantic=helper.get_semantic_map("data/cityscapes/Label512Full/%08d.png"%ind)#test label
-    b, h, w, c = bsemantic.shape
-    semantic = np.zeros([b, h//2, w//2, c])
-    for i in range(c):
-        for j in range(b):
-            semantic[j,:,:,i] = cv2.resize(bsemantic[j,:,:,i], (semantic.shape[2], semantic.shape[1]), cv2.INTER_NEAREST)
-    
-    output=sess.run(generator,feed_dict={label:np.concatenate((semantic,np.expand_dims(1-np.sum(semantic,axis=3),axis=3)),axis=3)})
-    output=np.minimum(np.maximum(output, 0.0), 255.0)
-    upper=np.concatenate((output[0,:,:,:],output[1,:,:,:],output[2,:,:,:]),axis=1)
-    middle=np.concatenate((output[3,:,:,:],output[4,:,:,:],output[5,:,:,:]),axis=1)
-    bottom=np.concatenate((output[6,:,:,:],output[7,:,:,:],output[8,:,:,:]),axis=1)
-    scipy.misc.toimage(np.concatenate((upper,middle,bottom),axis=0),cmin=0,cmax=255).save("result_kitti256p_2/final/%06d_output.jpg"%ind)
+else:
+    input_images=[None]*(NUM_TRAINING_IMAGES+100)
+    saver.restore(sess, "result_kitti256p_2/%04d/model.ckpt"%restore_epoch)
+    if not os.path.isdir("result_kitti256p_2/eval"):
+        os.makedirs("result_kitti256p_2/eval")
+    for ind in range(NUM_TRAINING_IMAGES+1,NUM_TRAINING_IMAGES+51):
+        path =  '../kitti/testing/image_2/%06d.png'%ind
+        img = imread_as_jpg(path)
+        img = cv2.resize(img, (496,150)) 
+        input_images[ind]=np.expand_dims(np.float32(img),axis=0)#training image
+        #semantic = np.load("hmpool5/%06d.npz"%ind)["arr_0"]#training label
+        #output=sess.run(generator,feed_dict={label2_small:np.concatenate((semantic,np.expand_dims(1-np.sum(semantic,axis=3),axis=3)),axis=3)})
+        output=sess.run(generator,feed_dict={real_image:input_images[ind]})
+        output=np.minimum(np.maximum(output,0.0),255.0)
+        output=np.minimum(np.maximum(output,0.0),255.0)
+        scipy.misc.toimage(output[0,:,:,:],cmin=0,cmax=255).save("result_kitti256p_2/eval/%06d_output.jpg"%(ind))
