@@ -102,17 +102,17 @@ G_opt=tf.train.AdamOptimizer(learning_rate=lr).minimize(G_loss,var_list=[var for
 all_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)
 init_vars = list(set(all_vars) - set(ssd_var_list))
 saver=tf.train.Saver(max_to_keep=1000, var_list=init_vars)
-sess.run(tf.initialize_variables(init_vars))
+#sess.run(tf.initialize_variables(init_vars))
 
+saver.restore(sess, "result_kitti256p_2/%04d/model.ckpt"%restore_epoch)
 
 if is_training:
     g_loss=np.zeros(NUM_TRAINING_IMAGES,dtype=float)
     input_images=[None]*(NUM_TRAINING_IMAGES+100)
     #label_images=[None]*NUM_TRAINING_IMAGES
-    for epoch in range(1,101):
+    for epoch in range(restore_epoch+1,101):
         if os.path.isdir("result_kitti256p_2/%04d"%epoch):
             continue
-        saver.restore(sess, "result_kitti256p_2/%04d/model.ckpt"%restore_epoch)
         cnt=0
         for ind in np.random.permutation(NUM_TRAINING_IMAGES - 25)+1:
             st=time.time()
